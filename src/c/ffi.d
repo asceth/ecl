@@ -142,7 +142,7 @@ static struct {
 	{@':stdcall', FFI_STDCALL},
 #elif defined(X86_WIN64)
 	{@':win64', FFI_WIN64},
-#elsif defined(X86_ANY) || defined(X86) || defined(X86_64)
+#elif defined(X86_ANY) || defined(X86) || defined(X86_64)
 	{@':cdecl', FFI_SYSV},
 	{@':sysv', FFI_SYSV},
 	{@':unix64', FFI_UNIX64},
@@ -890,52 +890,72 @@ prepare_cif(cl_env_ptr the_env, ffi_cif *cif, cl_object return_type,
             cl_object arg_types, cl_object args,
             cl_object cc_type, ffi_type ***output_copy)
 {
-        int n, ok;
-        ffi_type **types;
-        enum ecl_ffi_tag type = ecl_foreign_type_code(return_type);
-        if (!the_env->ffi_args_limit)
-                resize_call_stack(the_env, 32);
-        the_env->ffi_types[0] = ecl_type_to_libffi_type[type];
-        for (n=0; !Null(arg_types); ) {
-                if (!LISTP(arg_types)) {
-                        FEerror("In CALL-CFUN, types lists is not a proper list", 0);
-                }
-                if (n >= the_env->ffi_args_limit) {
-                        resize_call_stack(the_env, n + 32);
-                }
-		type = ecl_foreign_type_code(ECL_CONS_CAR(arg_types));
-                arg_types = ECL_CONS_CDR(arg_types);
-                the_env->ffi_types[++n] = ecl_type_to_libffi_type[type];
-                if (CONSP(args)) {
-                        cl_object object = ECL_CONS_CAR(args);
-                        args = ECL_CONS_CDR(args);
-                        if (type == ECL_FFI_CSTRING) {
-                                object = ecl_null_terminated_base_string(CAR(args));
-                                if (ECL_CONS_CAR(args) != object) {
-                                        ECL_STACK_PUSH(the_env, object);
-                                }
-                        }
-                        ecl_foreign_data_set_elt(the_env->ffi_values + n, type, object);
-                }
+  int n, ok;
+  ffi_type **types;
+  enum ecl_ffi_tag type = ecl_foreign_type_code(return_type);
+
+  if (!the_env->ffi_args_limit)
+    {
+      resize_call_stack(the_env, 32);
+    }
+
+  the_env->ffi_types[0] = ecl_type_to_libffi_type[type];
+
+  for (n=0; !Null(arg_types); )
+    {
+      if (!LISTP(arg_types))
+        {
+          FEerror("In CALL-CFUN, types lists is not a proper list", 0);
         }
-        if (output_copy) {
-                cl_index bytes = (n + 1) * sizeof(ffi_type*);
-                *output_copy = types = (ffi_type**)ecl_alloc_atomic(bytes);
-                memcpy(types, the_env->ffi_types, bytes);
-        } else {
-                types = the_env->ffi_types;
+
+      if (n >= the_env->ffi_args_limit)
+        {
+          resize_call_stack(the_env, n + 32);
         }
-        ok = ffi_prep_cif(cif, ecl_foreign_cc_code(cc_type), n, types[0], types + 1);
-        if (ok != FFI_OK) {
-                if (ok == FFI_BAD_ABI) {
-                        FEerror("In CALL-CFUN, not a valid ABI: ~A", 1,
-                                cc_type);
+
+      type = ecl_foreign_type_code(ECL_CONS_CAR(arg_types));
+      arg_types = ECL_CONS_CDR(arg_types);
+      the_env->ffi_types[++n] = ecl_type_to_libffi_type[type];
+      if (CONSP(args))
+        {
+          cl_object object = ECL_CONS_CAR(args);
+          args = ECL_CONS_CDR(args);
+          if (type == ECL_FFI_CSTRING)
+            {
+              object = ecl_null_terminated_base_string(CAR(args));
+              if (ECL_CONS_CAR(args) != object)
+                {
+                  ECL_STACK_PUSH(the_env, object);
                 }
-                if (ok == FFI_BAD_TYPEDEF) {
-                        FEerror("In CALL-CFUN, wrong or malformed argument types", 0);
-                }
+            }
+          ecl_foreign_data_set_elt(the_env->ffi_values + n, type, object);
         }
-        return n;
+    }
+
+  if (output_copy)
+    {
+      cl_index bytes = (n + 1) * sizeof(ffi_type*);
+      *output_copy = types = (ffi_type**)ecl_alloc_uncollectable(bytes);
+      memcpy(types, the_env->ffi_types, bytes);
+    }
+  else
+    {
+      types = the_env->ffi_types;
+    }
+  ok = ffi_prep_cif(cif, ecl_foreign_cc_code(cc_type), n, types[0], types + 1);
+
+  if (ok != FFI_OK)
+    {
+      if (ok == FFI_BAD_ABI)
+        {
+          FEerror("In CALL-CFUN, not a valid ABI: ~A", 1, cc_type);
+        }
+      if (ok == FFI_BAD_TYPEDEF)
+        {
+          FEerror("In CALL-CFUN, wrong or malformed argument types", 0);
+        }
+    }
+  return n;
 }
 
 @(defun si::call-cfun (fun return_type arg_types args &optional (cc_type @':default'))
@@ -959,7 +979,8 @@ static void
 callback_executor(ffi_cif *cif, void *result, void **args, void *userdata)
 {
         cl_object data = (cl_object)userdata;
-        cl_object fun = ECL_CONS_CAR(data);
+        cl_object closure = ECL_CONS_CAR(data);
+        cl_object fun = (data = ECL_CONS_CDR(data), ECL_CONS_CAR(data));
         cl_object ret_type = (data = ECL_CONS_CDR(data), ECL_CONS_CAR(data));
         cl_object arg_types = (data = ECL_CONS_CDR(data), ECL_CONS_CAR(data));
         cl_env_ptr the_env = ecl_process_env();
@@ -982,7 +1003,8 @@ callback_executor(ffi_cif *cif, void *result, void **args, void *userdata)
 cl_object
 si_free_ffi_closure(cl_object closure)
 {
-        ffi_closure_free(ecl_foreign_data_pointer_safe(closure));
+  ecl_free_uncollectable(((ffi_closure*)ecl_foreign_data_pointer_safe(closure))->cif->arg_types);
+  ffi_closure_free(ecl_foreign_data_pointer_safe(closure));
 }
 
 @(defun si::make-dynamic-callback (fun sym return_type arg_types
@@ -1005,7 +1027,8 @@ si_free_ffi_closure(cl_object closure)
                                                          closure);
         si_set_finalizer(closure_object, @'si::free-ffi-closure');
 
-        cl_object data = cl_list(6, closure_object,
+        cl_object data = cl_list(7, executable_closure_object,
+                                 closure_object,
                                  fun, return_type, arg_types, cc_type,
                                  ecl_make_foreign_data(@':pointer-void',
                                                        sizeof(*cif), cif),
@@ -1020,7 +1043,7 @@ si_free_ffi_closure(cl_object closure)
                         MAKE_FIXNUM(status));
         }
 	si_put_sysprop(sym, @':callback', data);
-        @(return closure_object);
+        @(return executable_closure_object);
 }
 @)
 #endif /* HAVE_LIBFFI */
